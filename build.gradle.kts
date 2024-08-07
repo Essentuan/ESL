@@ -5,7 +5,7 @@ plugins {
 }
 
 group = "net.essentuan"
-version = project.properties["version"]!! as String
+version = project.properties["esl_version"]!! as String
 
 val log4j_version: String by project
 val slf4j_version: String by project

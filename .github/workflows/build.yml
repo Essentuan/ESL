@@ -20,7 +20,7 @@ jobs:
         run: echo "BRANCH=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
 
       - name: Get Version
-        run: echo "ESL_VERSION=`grep 'version' ./gradle.properties | awk -F ' = ' '{print $2}'`" >> $GITHUB_ENV
+        run: echo "ESL_VERSION=`grep 'esl_version' ./gradle.properties | awk -F ' = ' '{print $2}'`" >> $GITHUB_ENV
 
       - name: Setup JAVA
         uses: actions/setup-java@v3
