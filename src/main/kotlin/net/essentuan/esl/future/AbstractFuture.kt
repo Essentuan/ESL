@@ -1,23 +1,21 @@
 package net.essentuan.esl.future
 
-import net.essentuan.esl.Result
-import net.essentuan.esl.fail
-import net.essentuan.esl.ifPresentOrElse
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.suspendCancellableCoroutine
+import net.essentuan.esl.Result
 import net.essentuan.esl.coroutines.delay
 import net.essentuan.esl.coroutines.launch
+import net.essentuan.esl.fail
 import net.essentuan.esl.future.api.Future
-import net.essentuan.esl.iteration.extensions.iterate
+import net.essentuan.esl.ifPresentOrElse
 import net.essentuan.esl.other.stacktrace
+import net.essentuan.esl.result
 import net.essentuan.esl.rx.ISubscription
 import net.essentuan.esl.rx.RxState
 import net.essentuan.esl.time.duration.Duration
 import org.reactivestreams.Subscriber
-import net.essentuan.esl.result
 import java.util.LinkedList
-import java.util.Queue
 import java.util.concurrent.CompletionStage
 import java.util.concurrent.ForkJoinPool
 import java.util.concurrent.TimeoutException
@@ -32,21 +30,21 @@ abstract class AbstractFuture<T> protected constructor(override val stacktrace: 
     final override var state: Future.State = Future.State.PENDING
         private set
 
-    val stack: Queue<Consumer<Result<T>>> = LinkedList()
-    val handlers = mutableListOf<Job>()
+    val stack = LinkedList<Consumer<Result<T>>>()
+    val handlers = LinkedList<Job>()
 
     @Synchronized
     fun complete(result: Result<T>) {
-        if (state != Future.State.PENDING || result is net.essentuan.esl.Result.Empty) return
+        if (state != Future.State.PENDING || result is Result.Empty) return
 
         this.result = result
         this.state = if (result is Result.Value) Future.State.RESOLVED else Future.State.REJECTED
 
-        handlers iterate {
-            it.cancel()
-        }
+        while (handlers.isNotEmpty())
+            handlers.poll().cancel()
 
-        for (consumer in stack) consumer.accept(result)
+        while (stack.isNotEmpty())
+            stack.poll().accept(result)
     }
 
     @Synchronized
