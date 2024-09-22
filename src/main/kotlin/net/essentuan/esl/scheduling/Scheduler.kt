@@ -17,7 +17,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 
-object Scheduler : Output.Group() {
+object Scheduler : Iterable<Task.Group>, Output.Group() {
     internal val groups = MapMaker().weakKeys().makeMap<Any, Task.Group>()
 
     var DISPATCHER: CoroutineScope by final {
@@ -105,6 +105,10 @@ object Scheduler : Output.Group() {
             return
 
         groups.lock { remove(owner) }
+    }
+
+    override fun iterator(): Iterator<Task.Group> {
+        return groups.lock { values.toList() }.iterator()
     }
 }
 
