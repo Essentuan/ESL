@@ -4,7 +4,9 @@ import net.essentuan.esl.iteration.`break`
 import net.essentuan.esl.iteration.extensions.mutable.iterate
 import net.essentuan.esl.other.lock
 import net.essentuan.esl.other.unsupported
+import net.essentuan.esl.scheduling.annotations.Every
 import net.essentuan.esl.time.duration.Duration
+import net.essentuan.esl.time.duration.seconds
 import net.essentuan.esl.time.extensions.timeSince
 import java.util.Date
 
@@ -56,6 +58,7 @@ private class Impl<K, V>(
         }
     }
 
+    @Every(seconds = 10.0)
     override fun cleanse() {
         backing.lock {
             entries iterate {
@@ -94,6 +97,7 @@ private class Impl<K, V>(
 
                 null
             }
+
             else -> store.value
         }
     }
