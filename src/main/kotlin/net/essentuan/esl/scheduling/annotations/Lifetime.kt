@@ -29,14 +29,14 @@ annotation class Lifetime(
 
 fun Lifetime.duration(): Duration {
     return years.years +
-            months.months +
-            weeks.weeks +
-            days.days +
-            hours.hours +
-            minutes.minutes +
-            seconds.seconds +
-            ms.ms +
-            us.micros +
-            ns.nanos
+        months.months +
+        weeks.weeks +
+        days.days +
+        hours.hours +
+        minutes.minutes +
+        seconds.seconds +
+        ms.ms +
+        us.micros +
+        ns.nanos
 }
 
