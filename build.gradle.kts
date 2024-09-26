@@ -55,6 +55,9 @@ tasks.test {
 publishing {
     publications {
         create<MavenPublication>("maven") {
+            group = "com.github.essentuan"
+            version = "v${project.version}"
+
             artifactId = "esl"
 
             from(components["java"])
