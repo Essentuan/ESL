@@ -1,12 +1,10 @@
 package net.essentuan.esl.scheduling.groups.weak
 
 import com.google.common.collect.MapMaker
-import net.essentuan.esl.reflections.extensions.annotatedWith
-import net.essentuan.esl.reflections.extensions.get
-import net.essentuan.esl.reflections.extensions.simpleString
-import net.essentuan.esl.reflections.extensions.visit
+import net.essentuan.esl.reflections.extensions.*
 import net.essentuan.esl.scheduling.Scheduler
 import net.essentuan.esl.scheduling.Task
+import net.essentuan.esl.scheduling.TaskScope
 import net.essentuan.esl.scheduling.annotations.Every
 import net.essentuan.esl.scheduling.annotations.Lifetime
 import net.essentuan.esl.scheduling.annotations.Workers
@@ -18,9 +16,11 @@ import net.essentuan.esl.time.duration.seconds
 import java.lang.ref.Cleaner
 import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.jvm.javaClass
 import kotlin.reflect.KFunction
 import kotlin.reflect.KParameter
 import kotlin.reflect.full.callSuspend
+import kotlin.reflect.full.declaredFunctions
 import kotlin.reflect.full.declaredMemberFunctions
 
 @OptIn(ExperimentalStdlibApi::class)
@@ -32,9 +32,23 @@ internal class WeakGroup(
     init {
         owner::class.visit()
             .map { it.kotlin }
-            .flatMap { it.declaredMemberFunctions }
+            .flatMap { it.declaredFunctions }
             .filter { it annotatedWith Every::class }
-            .filter { it.parameters.size == 1 && it.parameters[0].kind == KParameter.Kind.INSTANCE }
+            .filter {
+                when {
+                    //Size check
+                    it.parameters.size !in 1..2 -> false
+
+                    //Validate first param & return if it does not use TaskScope
+                    it.parameters[0].kind != KParameter.Kind.INSTANCE -> false
+                    it.parameters.size != 2 -> true
+
+                    //TaskGroup cases
+                    it.parameters[1].kind != KParameter.Kind.EXTENSION_RECEIVER -> false
+                    it.parameters[1].type.javaClass != TaskScope::class.java -> false
+                    else -> true
+                }
+            }
             .forEach {
                 this += WeakTask(it)
             }
@@ -51,14 +65,17 @@ internal class WeakGroup(
         executor[Lifetime::class]?.duration() ?: 10.seconds,
         executor[Workers::class]?.value ?: 1
     ) {
-        override suspend fun invoke() {
-            executor.callSuspend(owner.get() ?: return)
+        override suspend fun invoke(scope: TaskScope) {
+            if (executor.parameters.size == 2)
+                executor.callSuspend(owner.get() ?: return, scope)
+            else
+                executor.callSuspend(owner.get() ?: return)
         }
 
         override fun close(cancel: Boolean) {
             this@WeakGroup -= this
 
-            
+
             super.close(cancel)
         }
     }

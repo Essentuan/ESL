@@ -1,16 +1,23 @@
 package net.essentuan.esl.scheduling
 
-import com.google.common.collect.MapMaker
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Runnable
-import net.essentuan.esl.collections.mutableSetFrom
+import kotlinx.coroutines.*
+import net.essentuan.esl.KResult
+import net.essentuan.esl.Result
+import net.essentuan.esl.coroutines.launch
+import net.essentuan.esl.future.AbstractFuture
+import net.essentuan.esl.future.api.Future
+import net.essentuan.esl.future.api.except
+import net.essentuan.esl.isFail
 import net.essentuan.esl.time.duration.FormatFlag
+import net.essentuan.esl.toResult
 import java.util.*
-import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CompletionException
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.LinkedBlockingQueue
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.Continuation
 import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.createCoroutine
 import kotlin.coroutines.startCoroutine
 
 private typealias Work = Pair<CoroutineContext, Runnable>
@@ -98,7 +105,7 @@ internal object TaskDispatcher : CoroutineDispatcher() {
     }
 
     override fun dispatch(context: CoroutineContext, block: Runnable) {
-        val task = requireNotNull(context[Task]) { "Only tasks can be submitted to TaskDispatcher!" }
+        val task = requireNotNull(context[ProcessImpl]) { "Only tasks can be submitted to TaskDispatcher!" }
 
         if (!task.isCompleted)
             queue.offer(context to block)
@@ -118,6 +125,124 @@ internal object TaskDispatcher : CoroutineDispatcher() {
         }
     }
 
+    private abstract class ProcessImpl<T>(
+        final override val task: Task,
+        var thread: Worker? = null,
+        private val children: MutableList<ProcessImpl<*>> = CopyOnWriteArrayList()
+    ) : CoroutineContext.Element, Continuation<T>, AbstractFuture<T>(), Task.Process, List<Task.Process> by children {
+        private var count = 0
+        private var ret: Result<T>? = null
+
+        override val key: CoroutineContext.Key<*>
+            get() = ProcessImpl
+
+        final override val context: CoroutineContext
+            get() = TaskDispatcher + this
+
+        override var status: Int = Task.PENDING
+            get() = when (val result = result()) {
+                is Result.Value<*> -> Task.COMPLETED
+                is Result.Fail<*> -> if (result.cause is CancellationException) Task.CANCELLED else Task.COMPLETED
+                else -> field
+            }
+
+        override val isCompleted: Boolean
+            get() = result() !is Result.Empty
+
+        override fun complete(result: Result<T>) {
+            if (result !is Result.Fail<*>)
+                synchronized(this) {
+                    if (ret == null || count > 0)
+                        return
+                }
+
+            super.complete(result)
+        }
+
+        public override fun raise(ex: Throwable) {
+            super.raise(ex)
+        }
+
+        override fun resumeWith(result: KResult<T>) {
+            ret = result.toResult()
+
+            complete(result.toResult())
+        }
+
+        final override fun <T> launch(name: String, block: suspend TaskScope.() -> T): Future<T> {
+            return synchronized(this) {
+                count++
+                val child = ChildProcess<T>(name, this)
+                children += child
+
+                child.handle {
+                    synchronized(this) {
+                        count--
+                    }
+
+                    if (it.isFail()) {
+                        complete(
+                            Result.fail(
+                                when (val ex = it.cause) {
+                                    is CancellationException, is Task.Exception -> ex
+                                    else -> Task.Exception(
+                                        child,
+                                        it.cause
+                                    )
+                                }
+                            )
+                        )
+                    } else
+                        complete(ret ?: return@handle)
+                }
+
+                except(child::raise)
+
+                child
+            }.start(block)
+        }
+
+        fun start(block: suspend TaskScope.() -> T): Future<T> {
+            synchronized(this) {
+                if (status > Task.PENDING)
+                    return this
+
+                status = Task.ENQUEUED
+            }
+
+            block.startCoroutine(this, this)
+
+            return this
+        }
+
+        private class ChildProcess<T>(
+            override val name: String,
+            parent: ProcessImpl<*>
+        ) :
+            ProcessImpl<T>(parent.task) {
+            override val id: String = "${parent.id}/$name"
+
+        }
+
+        companion object : CoroutineContext.Key<ProcessImpl<*>>
+    }
+
+    private class ContextImpl(
+        task: Task,
+        var worker: Task.Worker? = null
+    ) : Task.Context, ProcessImpl<Unit>(task) {
+        override val id: String
+            get() = "$name#${worker?.id ?: "???"}"
+
+        override val name: String
+            get() = task.id
+
+        override fun cancel() {
+            thread?.cancel()
+            raise(CancellationException())
+        }
+    }
+
     private class Worker(
         id: Int
     ) : Thread(threadGroup, "worker-$id") {
@@ -134,7 +259,7 @@ internal object TaskDispatcher : CoroutineDispatcher() {
 
         override fun run() {
             while (true) {
-                var task: ContextImpl? = null
+                var task: ProcessImpl<*>? = null
 
                 try {
                     synchronized(this) {
@@ -146,27 +271,30 @@ internal object TaskDispatcher : CoroutineDispatcher() {
                         break
 
                     val (context, work) = queue.take()
-                    task = context[Task] as ContextImpl
+                    task = context[ProcessImpl]!!
 
                     if (task.isCompleted)
                         continue
 
-                    synchronized(task) {
-                        task.thread = this
-                        task.state = Task.State.RUNNING
-                    }
+                    task.thread = this
+                    task.status = Task.RUNNING
 
                     work.run()
                 } catch (ex: InterruptedException) {
                     if (!cancelling && !closing)
                         Scheduler.error("Interuptted while running ${task?.id ?: name}!", ex)
                 } catch (ex: Exception) {
-                    Scheduler.error("An exception was thrown while running ${task?.id ?: name}!", ex)
+                    if (task != null)
+                        task.raise(Task.Exception(task, ex))
+                    else
+                        Scheduler.error("An exception was thrown while executing $name!", ex)
+
                 } finally {
-                    synchronized(task ?: continue) {
-                        task.thread = null
-                        task.state = Task.State.SUSPENDED
-                    }
+                    if (task == null)
+                        continue
+
+                    task.thread = null
+                    task.status = Task.SUSPENDED
                 }
             }
         }
@@ -181,58 +309,5 @@ internal object TaskDispatcher : CoroutineDispatcher() {
             }
         }
 
-    }
-
-    private class ContextImpl(
-        override val task: Task,
-        var worker: Task.Worker? = null,
-        var thread: Worker? = null,
-        private var completion: ((Result<Unit>) -> Unit)? = null
-    ) : Task.Context, Continuation<Unit> {
-        val id: String
-            get() = "${task.id}#${worker?.id ?: "???"}"
-
-        override val context: CoroutineContext = TaskDispatcher + this
-
-        override var state: Task.State = Task.State.PENDING
-            @Synchronized get
-            @Synchronized set(value) {
-                if (isCompleted)
-                    return
-
-                field = value
-            }
-
-        override val isCompleted: Boolean
-            @Synchronized get() = state == Task.State.COMPLETED || state == Task.State.CANCELLED
-
-        override fun start(block: suspend () -> Unit, completion: (Result<Unit>) -> Unit) {
-            synchronized(this) {
-                require(this.completion == null) { "This context has already been assigned a task!" }
-
-                this.completion = completion
-            }
-
-            block.startCoroutine(this)
-        }
-
-        override fun resumeWith(result: Result<Unit>) {
-            synchronized(this) {
-                if (isCompleted)
-                    return
-
-                state = if (result.exceptionOrNull() is CancellationException)
-                    Task.State.CANCELLED
-                else
-                    Task.State.COMPLETED
-            }
-
-            completion?.invoke(result)
-        }
-
-        override fun cancel() {
-            thread?.cancel()
-            resumeWith(Result.failure(CancellationException()))
-        }
     }
 }

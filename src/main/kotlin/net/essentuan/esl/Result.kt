@@ -17,6 +17,8 @@ import kotlin.experimental.ExperimentalTypeInference
 import kotlin.jvm.java
 import kotlin.jvm.javaClass
 
+typealias KResult<T> = kotlin.Result<T>
+
 interface Result<T> {
     class Value<T> internal constructor(val value: T) : Result<T> {
         override fun toString() = repr {
@@ -49,14 +51,14 @@ interface Result<T> {
 inline fun <T> unsafe(block: () -> T): Result<T> {
     return try {
         return block().result()
-    } catch(ex: Exception) {
+    } catch (ex: Exception) {
         ex.fail()
     }
 }
 
 fun <T> T.result(): Result<T> = Result.of(this)
 
-fun <T: Any> T?.ofNullable(): Result<T> = this?.result() ?: Result.empty()
+fun <T : Any> T?.ofNullable(): Result<T> = this?.result() ?: Result.empty()
 
 fun <T> Throwable.fail(): Result<T> = Result.fail(this)
 
@@ -88,7 +90,7 @@ fun <T> Result<T>.isFail(): Boolean {
 }
 
 fun <T> Result<T>.get(): T {
-    return when(this) {
+    return when (this) {
         is Result.Value -> value
         is Result.Fail -> throw cause
         else -> throw NoSuchElementException()
@@ -104,7 +106,7 @@ inline fun <T> Result<T>.filter(predicate: (T) -> Boolean): Result<T> {
             this
         else
             Result.empty()
-    } catch(ex: Exception) {
+    } catch (ex: Exception) {
         ex.fail()
     }
 }
@@ -135,7 +137,7 @@ inline fun <T> Result<T>.filterNot(crossinline predicate: (T) -> Boolean): Resul
     filter { !predicate(it) }
 
 @Suppress("UNCHECKED_CAST")
-fun <T: Any> Result<T?>.filterNotNull(): Result<T> {
+fun <T : Any> Result<T?>.filterNotNull(): Result<T> {
     return when {
         !isPresent() -> this as Result<T>
         value == null -> Result.empty()
@@ -150,7 +152,7 @@ inline fun <T, U> Result<T>.map(mapper: (T) -> U): Result<U> {
 
     return try {
         mapper(value).result()
-    } catch(ex: Exception) {
+    } catch (ex: Exception) {
         ex.fail()
     }
 }
@@ -169,7 +171,7 @@ inline fun <T, U> Result<T>.flatMap(mapper: (T) -> Result<U>): Result<U> {
 
     return try {
         mapper(value)
-    } catch(ex: Exception) {
+    } catch (ex: Exception) {
         ex.fail()
     }
 }
@@ -181,7 +183,7 @@ inline infix fun <T> Result<T>.otherwise(mapper: () -> T): Result<T> {
 
     return try {
         mapper().result()
-    } catch(ex: Exception) {
+    } catch (ex: Exception) {
         ex.fail()
     }
 }
@@ -193,7 +195,7 @@ inline fun <T> Result<T>.otherwise(mapper: () -> Result<T>): Result<T> {
 
     return try {
         mapper()
-    } catch(ex: Exception) {
+    } catch (ex: Exception) {
         ex.fail()
     }
 }
@@ -208,13 +210,13 @@ inline fun <T, reified EX> Result<T>.except(filter: (EX) -> Boolean = { true }, 
             handler(cause).result()
         else
             this
-    } catch(ex: Exception) {
+    } catch (ex: Exception) {
         ex.fail()
     }
 }
 
 @JvmName("exceptFlatMap")
-inline fun <T, reified EX> Result<T>.except(filter: (EX) -> Boolean = { true } ,handler: (EX) -> Result<T>): Result<T> {
+inline fun <T, reified EX> Result<T>.except(filter: (EX) -> Boolean = { true }, handler: (EX) -> Result<T>): Result<T> {
     if (!isFail())
         return this
 
@@ -223,7 +225,7 @@ inline fun <T, reified EX> Result<T>.except(filter: (EX) -> Boolean = { true } ,
             handler(cause)
         else
             this
-    } catch(ex: Exception) {
+    } catch (ex: Exception) {
         ex.fail()
     }
 }
@@ -262,7 +264,7 @@ inline fun <T> Result<T>.orElseGet(supplier: () -> T): T {
     return if (isPresent()) value else supplier()
 }
 
-fun <T: Any> Result<T>.orNull(): T? {
+fun <T : Any> Result<T>.orNull(): T? {
     return if (isPresent()) value else null
 }
 
@@ -283,7 +285,7 @@ inline infix fun <T> Result<T>.elif(block: () -> T): T =
 inline fun <T> Result<T>.orThrow(supplier: () -> Throwable): T = orElseThrow(supplier)
 
 fun <T> Result<T>.stream(): Stream<T> {
-    return if(isEmpty()) Stream.empty() else Stream.of(orElseThrow())
+    return if (isEmpty()) Stream.empty() else Stream.of(orElseThrow())
 }
 
 fun <T> Result<T>.publish(): Publisher<T> = Publisher {
@@ -296,11 +298,12 @@ fun <T> Result<T>.publish(): Publisher<T> = Publisher {
             if (state == RxState.OPEN && n > 0) {
                 cancel()
 
-                when(this@publish) {
+                when (this@publish) {
                     is Result.Value<T> -> {
                         it.onNext(value)
                         it.onComplete()
                     }
+
                     is Result.Fail<T> -> it.onError(cause)
                     is Result.Empty -> it.onComplete()
                 }
@@ -315,4 +318,11 @@ fun <T> Result<T>.publish(): Publisher<T> = Publisher {
 
 fun <T> Result<T>.asSequence(): Sequence<T> {
     return if (isEmpty()) emptySequence() else sequenceOf(orElseThrow())
+}
+
+fun <T> KResult<T>.toResult(): Result<T> {
+    return when {
+        isFailure -> Result.fail<T>(exceptionOrNull()!!)
+        else -> Result.of(getOrThrow())
+    }
 }

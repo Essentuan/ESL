@@ -7,6 +7,7 @@ import net.essentuan.esl.reflections.Types.Companion.objects
 import net.essentuan.esl.reflections.extensions.extends
 import net.essentuan.esl.reflections.extensions.get
 import net.essentuan.esl.scheduling.Task
+import net.essentuan.esl.scheduling.TaskScope
 import net.essentuan.esl.scheduling.annotations.*
 import net.essentuan.esl.scheduling.groups.weak.tasks
 import net.essentuan.esl.scheduling.id
@@ -17,6 +18,7 @@ import net.essentuan.esl.time.duration.seconds
 import java.util.*
 import kotlin.random.Random
 import kotlin.reflect.KFunction
+import kotlin.reflect.KParameter
 import kotlin.reflect.full.callSuspend
 
 abstract class StaticTask(
@@ -36,7 +38,7 @@ abstract class StaticTask(
         StaticTask += this
     }
 
-    final override suspend fun invoke() {
+    final override suspend fun invoke(scope: TaskScope) {
         if (runs >= 0)
             synchronized(this) {
                 if (executions++ >= runs) {
@@ -46,7 +48,7 @@ abstract class StaticTask(
                 }
             }
 
-        run()
+        run(scope)
 
         if (runs in 0..executions) {
             close(false)
@@ -55,7 +57,7 @@ abstract class StaticTask(
         }
     }
 
-    abstract suspend fun run()
+    abstract suspend fun run(scope: TaskScope)
 
     override fun close(cancel: Boolean) {
         StaticTask -= this
@@ -71,8 +73,11 @@ abstract class StaticTask(
         executor[Lifetime::class]?.duration() ?: 10.seconds,
         executor[Workers::class]?.value ?: 1
     ) {
-        override suspend fun run() {
-            executor.callSuspend()
+        override suspend fun run(scope: TaskScope) {
+            if (executor.parameters.size == 1)
+                executor.callSuspend(scope)
+            else
+                executor.callSuspend()
         }
     }
 
@@ -81,7 +86,13 @@ abstract class StaticTask(
             Reflections.functions
                 .annotatedWith(Every::class)
                 .static()
-                .filter { it.parameters.isEmpty() }
+                .filter {
+                    when (it.parameters.size) {
+                        0 -> true
+                        1 -> it.parameters[0].kind == KParameter.Kind.EXTENSION_RECEIVER && it.parameters[0].type.javaClass == TaskScope::class.java
+                        else -> false
+                    }
+                }
                 .forEach {
                     FuncTask(it)
                 }
@@ -105,7 +116,7 @@ abstract class StaticTask(
             immediate: Boolean = true,
             runs: Int = -1,
             start: Boolean = true,
-            crossinline block: suspend () -> Unit
+            crossinline block: suspend TaskScope.() -> Unit
         ): Task {
             return object : StaticTask(name, rate, ttl, capacity, immediate, runs) {
                 init {
@@ -113,15 +124,15 @@ abstract class StaticTask(
                         resume()
                 }
 
-                override suspend fun run() =
-                    block()
+                override suspend fun run(scope: TaskScope) =
+                    block(scope)
             }
         }
 
         inline fun after(
             rate: Duration,
             ttl: Duration = 10.seconds,
-            crossinline block: suspend () -> Unit
+            crossinline block: suspend TaskScope.() -> Unit
         ): Task = every(rate, ttl, runs = 1, block = block)
     }
 }

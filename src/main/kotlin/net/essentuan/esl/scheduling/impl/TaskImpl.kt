@@ -1,13 +1,13 @@
 package net.essentuan.esl.scheduling.impl
 
 import kotlinx.coroutines.CancellationException
-import net.essentuan.esl.collections.maps.IntMap
-import net.essentuan.esl.collections.synchronized
 import net.essentuan.esl.scheduling.Scheduler
 import net.essentuan.esl.scheduling.Task
+import net.essentuan.esl.scheduling.TaskScope
 import net.essentuan.esl.time.duration.Duration
 import net.essentuan.esl.time.duration.seconds
 import net.essentuan.esl.time.extensions.timeSince
+import net.essentuan.esl.Result
 import java.util.*
 import java.util.concurrent.ConcurrentHashMap
 
@@ -17,7 +17,7 @@ abstract class TaskImpl(
     override val ttl: Duration = 10.seconds,
     final override val capacity: Int = 1,
     immediate: Boolean = true
-) : Task, suspend () -> Unit {
+) : Task, suspend (TaskScope) -> Unit {
     init {
         require(capacity > 0)
     }
@@ -35,7 +35,7 @@ abstract class TaskImpl(
         lastExecution = Date()
 
         val worker = WorkerImpl(workers.size, context)
-        context.start(this, worker)
+        context.start(this).handle(worker)
 
         return worker
     }
@@ -93,27 +93,34 @@ abstract class TaskImpl(
     private inner class WorkerImpl(
         override val id: Int,
         private val context: Task.Context
-    ) : Task.Worker, (Result<Unit>) -> Unit {
+    ) : Task.Worker, List<Task.Process> by context, (Result<Unit>) -> Unit {
         init {
             workers[id] = this
         }
 
         override val created: Date = Date()
-        override val state: Task.State
-            get() = context.state
+        override val status: Int
+            get() = context.status
 
-        override fun invoke(p1: Result<Unit>) {
+        override fun invoke(result: Result<Unit>) {
             workers.remove(id, this)
-
-            if (p1.isSuccess)
-                return
-
-            if (p1.exceptionOrNull() is CancellationException)
-                return
-
-            Scheduler.error("An exception was thrown while executing ${this@TaskImpl.id}#$id!", p1.exceptionOrNull()!!)
-
             complete()
+
+            when (val ex = (result as? Result.Fail<*>)?.cause ?: return) {
+                is CancellationException -> Scheduler.error("${this@TaskImpl.id}#$id was cancelled")
+                is Task.Exception -> {
+                    Scheduler.error(
+                        "An exception was thrown while executing ${ex.process.id}!",
+                        ex.cause
+                    )
+                }
+
+                else ->
+                    Scheduler.error(
+                        "An exception was thrown while executing ${this@TaskImpl.id}#$id!",
+                        result.cause
+                    )
+            }
         }
 
         override fun cancel() {

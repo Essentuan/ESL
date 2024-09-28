@@ -1,18 +1,15 @@
 package net.essentuan.esl.scheduling
 
-import kotlinx.coroutines.CoroutineScope
-import net.essentuan.esl.coroutines.launch
+import net.essentuan.esl.Result
 import net.essentuan.esl.future.api.Future
-import net.essentuan.esl.other.stacktrace
 import net.essentuan.esl.reflections.extensions.classOf
 import net.essentuan.esl.time.duration.Duration
-import net.essentuan.esl.time.duration.seconds
 import net.essentuan.esl.time.extensions.timeSince
 import java.io.Closeable
 import java.lang.reflect.Method
-import java.util.Date
+import java.util.*
+import java.util.concurrent.CompletionException
 import kotlin.coroutines.CoroutineContext
-import kotlin.random.Random
 import kotlin.reflect.KFunction
 import kotlin.reflect.jvm.javaMethod
 
@@ -35,29 +32,25 @@ interface Task : Set<Task.Worker>, Closeable {
 
     override fun close() = close(true)
 
-    enum class State {
-        PENDING,
-        RUNNING,
-        SUSPENDED,
-        COMPLETED,
-        CANCELLED;
-    }
+    class Exception(val process: Task.Process, cause: Throwable) : CompletionException(cause)
 
-    sealed interface Context : CoroutineContext.Element {
-        override val key: CoroutineContext.Key<*>
-            get() = Task
+    sealed interface Process : List<Process>, TaskScope {
+        val id: String
+        val name: String
 
         val task: Task
-        val state: State
+        val status: Int
 
         val isCompleted: Boolean
+    }
 
-        fun start(block: suspend () -> Unit, completion: (Result<Unit>) -> Unit)
+    sealed interface Context : Process {
+        fun start(block: suspend TaskScope.() -> Unit): Future<Unit>
 
         fun cancel()
     }
 
-    interface Worker {
+    interface Worker : List<Process> {
         val id: Int
         val created: Date
 
@@ -65,7 +58,7 @@ interface Task : Set<Task.Worker>, Closeable {
             get() =
                 created.timeSince()
 
-        val state: State
+        val status: Int
 
         fun cancel()
     }
@@ -89,7 +82,14 @@ interface Task : Set<Task.Worker>, Closeable {
         fun suspend(cancel: Boolean = false)
     }
 
-    companion object : CoroutineContext.Key<Context>
+    companion object {
+        const val PENDING = 0
+        const val ENQUEUED = 1
+        const val RUNNING = 2
+        const val SUSPENDED = 3
+        const val COMPLETED = 4
+        const val CANCELLED = 5
+    }
 }
 
 val Method.id: String
