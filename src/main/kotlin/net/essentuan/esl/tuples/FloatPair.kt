@@ -1,4 +1,4 @@
-package net.essentuan.esl.tuples.numbers
+package net.essentuan.esl.tuples
 
 internal const val MASK: Long = 0xFFFFFFFF
 
