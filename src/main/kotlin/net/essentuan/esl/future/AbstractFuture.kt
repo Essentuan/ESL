@@ -5,9 +5,11 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.suspendCancellableCoroutine
 import net.essentuan.esl.Result
 import net.essentuan.esl.coroutines.delay
+import net.essentuan.esl.coroutines.dispatch
 import net.essentuan.esl.coroutines.launch
 import net.essentuan.esl.fail
 import net.essentuan.esl.future.api.Future
+import net.essentuan.esl.future.api.except
 import net.essentuan.esl.ifPresentOrElse
 import net.essentuan.esl.other.stacktrace
 import net.essentuan.esl.result
@@ -27,27 +29,27 @@ import kotlin.coroutines.resumeWithException
 abstract class AbstractFuture<T> protected constructor(override val stacktrace: Array<StackTraceElement> = stacktrace()) :
     Future<T> {
     var result: Result<T>? = null
-    final override var state: Future.State = Future.State.PENDING
+
+    final override var state: Int = Future.PENDING
         private set
 
     val stack = LinkedList<Consumer<Result<T>>>()
-    val handlers = LinkedList<Job>()
+    val handlers = LinkedList<Future<*>>()
 
-    @Synchronized
-    fun complete(result: Result<T>) {
-        if (state != Future.State.PENDING || result is Result.Empty) return
+    open fun complete(result: Result<T>) {
+        synchronized(this) {
+            if (state != Future.PENDING || result is Result.Empty) return
 
-        this.result = result
-        this.state = if (result is Result.Value) Future.State.RESOLVED else Future.State.REJECTED
+            this.result = result
+            state = if (result is Result.Value) Future.RESOLVED else Future.REJECTED
+        }
 
-        while (handlers.isNotEmpty())
-            handlers.poll().cancel()
+        handlers.clear()
 
         while (stack.isNotEmpty())
             stack.poll().accept(result)
     }
 
-    @Synchronized
     protected fun copy(other: Future<T>) {
         other.except { throwable: Throwable -> this.raise(throwable) }.then { value: T -> this.complete(value) }
     }
@@ -60,19 +62,22 @@ abstract class AbstractFuture<T> protected constructor(override val stacktrace: 
         complete(Result.fail(ex))
     }
 
-    @Synchronized
     protected open fun push(consumer: Consumer<Result<T>>) {
-        if (state == Future.State.PENDING) synchronized(stack) {
-            stack.add(consumer)
+        synchronized(this) {
+            if (state == Future.PENDING) {
+                stack.add(consumer)
+
+                return
+            }
         }
-        else consumer.accept(result!!)
+
+        consumer.accept(result!!)
     }
 
     protected open fun <U> stage(): AbstractFuture<U> {
         return Stage()
     }
 
-    @Synchronized
     protected fun <U> branch(handler: Function<Result<T>, Result<U>>): Future<U> {
         val stage = stage<U>()
 
@@ -87,7 +92,6 @@ abstract class AbstractFuture<T> protected constructor(override val stacktrace: 
         return stage
     }
 
-    @Synchronized
     override fun threaded(): Future<T> {
         val future = Threaded<T>()
 
@@ -97,20 +101,20 @@ abstract class AbstractFuture<T> protected constructor(override val stacktrace: 
     }
 
     @Suppress("UNCHECKED_CAST")
-    override fun <U> map(mapper: Function<T, U>): Future<U> {
+    override fun <U> map(mapper: (T) -> U): Future<U> {
         return branch {
             return@branch when (it) {
-                is Result.Value -> Result.of(mapper.apply(it.value))
+                is Result.Value -> Result.of(mapper(it.value))
                 else -> it as Result<U>
             }
         }
     }
 
-    @Synchronized
     override fun <U> compose(mapper: (T) -> Future<U>): Future<U> {
         val stage = stage<U>()
 
         push {
+            @Suppress("UNCHECKED_CAST")
             if (it is Result.Value) try {
                 stage.copy(mapper(it.value))
             } catch (t: Throwable) {
@@ -122,45 +126,36 @@ abstract class AbstractFuture<T> protected constructor(override val stacktrace: 
         return stage
     }
 
-    override fun peek(value: Consumer<T>): Future<T> {
+    override fun peek(value: (T) -> Unit): Future<T> {
         return branch {
             if (it is Result.Value)
-                value.accept(it.value)
+                value(it.value)
 
             it
         }
     }
 
-    override fun exec(runnable: Runnable): Future<T> {
+    override fun exec(runnable: () -> Unit): Future<T> {
         return branch { result: Result<T> ->
-            runnable.run()
+            runnable()
             result
         }
     }
 
-    override fun except(handler: Consumer<Throwable>): Future<T> {
+    override fun handle(consumer: (Result<T>) -> Unit): Future<T> {
         return branch {
-            if (it is Result.Fail)
-                handler.accept(it.cause)
-
-            it
-        }
-    }
-
-    override fun handle(consumer: (Result<T>) -> Unit) {
-        branch {
             consumer(it)
 
             it
         }
     }
 
-    override fun revive(reviver: Function<Throwable, Result<T>>): Future<T> {
+    override fun revive(reviver: (Throwable) -> Result<T>): Future<T> {
         return branch {
             if (it is Result.Fail) {
-                val out = reviver.apply(it.cause)
+                val out = reviver(it.cause)
 
-                return@branch if (out is net.essentuan.esl.Result.Empty) it else out
+                return@branch if (out is Result.Empty) it else out
             }
 
             it
@@ -176,11 +171,12 @@ abstract class AbstractFuture<T> protected constructor(override val stacktrace: 
         }
     }
 
-
     @Synchronized
-    @OptIn(DelicateCoroutinesApi::class)
     override fun timeout(duration: Duration): Future<T> {
-        handlers.add(launch {
+        if (state != Future.PENDING)
+            return this
+
+        handlers.add(dispatch {
             delay(duration)
 
             raise(TimeoutException())
@@ -201,7 +197,7 @@ abstract class AbstractFuture<T> protected constructor(override val stacktrace: 
 
     @Synchronized
     override fun result(): Result<T> {
-        return requireNotNull(result) { "Cannot net.essentuan.esl.get net.essentuan.esl.result for pending future!" }
+        return result ?: Result.empty()
     }
 
     override fun subscribe(s: Subscriber<in T>) {
@@ -240,11 +236,22 @@ abstract class AbstractFuture<T> protected constructor(override val stacktrace: 
     private inner class Stage<U> : AbstractFuture<U>(stacktrace)
 
     private inner class Threaded<R> : AbstractFuture<R>(stacktrace) {
-        @Synchronized
         override fun push(consumer: Consumer<Result<R>>) {
-            this.stack.add(Consumer<Result<R>> { result: Result<R> ->
-                ForkJoinPool.commonPool().execute { consumer.accept(result) }
-            })
+            synchronized(this) {
+                if (state == Future.PENDING) {
+                    stack.add {
+                        ForkJoinPool.commonPool().execute {
+                            consumer.accept(it)
+                        }
+                    }
+
+                    return
+                }
+            }
+
+            ForkJoinPool.commonPool().execute {
+                consumer.accept(result!!)
+            }
         }
 
         override fun <U> stage(): AbstractFuture<U> {

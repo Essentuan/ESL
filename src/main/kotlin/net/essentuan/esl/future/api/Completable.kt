@@ -15,7 +15,7 @@ interface Completable<T> : Future<T> {
         complete(supplier.get())
     }
 
-    infix fun raise(t: Throwable)
+    infix fun raise(ex: Throwable)
 
     infix fun raise(supplier: Supplier<Throwable>) {
         raise(supplier.get())
@@ -29,7 +29,7 @@ interface Completable<T> : Future<T> {
 
     companion object {
         operator fun <T> invoke(): Completable<T> {
-            return object : AbstractCompletable<T>() { }
+            return object : AbstractCompletable<T>() {}
         }
 
         inline operator fun <T> invoke(crossinline block: suspend () -> T): Completable<T> {

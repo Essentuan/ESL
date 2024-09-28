@@ -3,7 +3,7 @@ package net.essentuan.esl.future.api
 import net.essentuan.esl.Result
 import net.essentuan.esl.future.AbstractCompletable
 import net.essentuan.esl.future.AbstractFuture
-import net.essentuan.esl.future.LazyFuture
+import net.essentuan.esl.isFail
 import net.essentuan.esl.reflections.extensions.extends
 import net.essentuan.esl.time.TimeUnit
 import net.essentuan.esl.time.duration.Duration
@@ -18,52 +18,41 @@ import kotlin.reflect.KClass
 
 interface Future<T> : Publisher<T> {
     val pending: Boolean
-        get() = state == State.PENDING
+        get() = state == PENDING
 
-    val state: State
+    val state: Int
 
     val stacktrace: Array<StackTraceElement>
 
+    fun result(): Result<T>
+
     fun threaded(): Future<T>
 
-    fun <U> map(mapper: Function<T, U>): Future<U>
+    infix fun <U> map(mapper: (T) -> U): Future<U>
 
-    fun <U> compose(mapper: (T) -> Future<U>): Future<U>
+    infix fun <U> compose(mapper: (T) -> Future<U>): Future<U>
 
-    fun peek(value: Consumer<T>): Future<T>
+    infix fun peek(value: (T) -> Unit): Future<T>
 
-    fun exec(runnable: Runnable): Future<T>
+    infix fun exec(runnable: () -> Unit): Future<T>
 
-    fun except(handler: Consumer<Throwable>): Future<T>
+    fun revive(reviver: (Throwable) -> Result<T>): Future<T>
 
-    @Suppress("UNCHECKED_CAST")
-    fun <U : Throwable> except(handler: Consumer<U>, cls: Class<U>): Future<T> {
-        return except { t: Throwable ->
-            if (cls.isAssignableFrom(t.javaClass))
-                handler.accept(t as U)
-        }
-    }
-
-    fun <U : Throwable> except(handler: Consumer<U>, cls: KClass<U>): Future<T> {
-        return except(handler, cls.java)
-    }
-
-    fun revive(reviver: Function<Throwable, Result<T>>): Future<T>
-
-    fun revive(cls: Class<out Throwable>, supplier: Supplier<Result<T>>): Future<T> {
-        return revive { t: Throwable ->
-            if (t.javaClass extends cls)
-                return@revive supplier.get()
-
-            Result.empty()
+    fun revive(cls: Class<out Throwable>, supplier: () -> Result<T>): Future<T> {
+        return revive {
+            if (it.javaClass extends cls)
+                supplier()
+            else
+                Result.empty()
         }
     }
 
     fun revive(value: T, cls: Class<out Throwable>): Future<T> {
-        return revive { t: Throwable ->
-            if (cls.isAssignableFrom(t.javaClass)) return@revive Result.of(value)
-
-            Result.empty()
+        return revive {
+            if (it.javaClass extends cls)
+                Result.of(value)
+            else
+                Result.empty()
         }
     }
 
@@ -71,9 +60,9 @@ interface Future<T> : Publisher<T> {
         return revive(value, cls.java)
     }
 
-    fun then(consumer: (T) -> Unit): Future<T>
+    infix fun then(consumer: (T) -> Unit): Future<T>
 
-    fun handle(consumer: (Result<T>) -> Unit)
+    infix fun handle(consumer: (Result<T>) -> Unit): Future<T>
 
     fun finish(): Future<Unit> {
         return map { }
@@ -87,28 +76,20 @@ interface Future<T> : Publisher<T> {
 
     suspend fun await(): T
 
-    fun result(): Result<T>
-
     fun toCompletable(): CompletableFuture<T> = CompletableFuture<T>().apply {
         this@Future.except(this::completeExceptionally).then(this::complete)
     }
 
-    enum class State {
-        PENDING,
-        RESOLVED,
-        REJECTED
-    }
-
     companion object {
+        const val PENDING = 0
+        const val RESOLVED = 1
+        const val REJECTED = 2
+
         operator fun <T> invoke(value: T): Future<T> = Completable(value)
 
         operator fun <T> invoke(stage: CompletionStage<T>): Future<T> = AbstractFuture.Native(stage)
 
         inline operator fun <T> invoke(crossinline block: suspend () -> T): Future<T> = Completable(block)
-
-        fun <T> lazy(supplier: Supplier<Future<T>>): Future<T> {
-            return LazyFuture(supplier)
-        }
 
         fun sleep(duration: Duration): Future<Unit> {
             return Completable<Unit>()
@@ -126,7 +107,14 @@ interface Future<T> : Publisher<T> {
     }
 }
 
-fun <T> CompletionStage<T>.esl(): Future<T> = Future.invoke(this)
+inline infix fun <T, reified EX : Throwable> Future<T>.except(crossinline block: (EX) -> Unit): Future<T> {
+    return handle {
+        if (it.isFail() && it.cause is EX)
+            block(it.cause)
+    }
+}
+
+fun <T> CompletionStage<T>.toFuture(): Future<T> = Future.invoke(this)
 
 class CompletionException(
     future: Future<*>,
