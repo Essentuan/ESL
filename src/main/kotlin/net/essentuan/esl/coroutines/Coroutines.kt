@@ -1,17 +1,6 @@
 package net.essentuan.esl.coroutines
 
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Deferred
-import kotlinx.coroutines.DelicateCoroutinesApi
-import kotlinx.coroutines.ExperimentalCoroutinesApi
-import kotlinx.coroutines.GlobalScope
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.async
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.*
 import net.essentuan.esl.Result
 import net.essentuan.esl.future.api.Future
 import net.essentuan.esl.ifPresent
@@ -23,30 +12,27 @@ import kotlin.reflect.KProperty
 
 val COMMON_POOL = ForkJoinPool.commonPool().asCoroutineDispatcher()
 
-@DelicateCoroutinesApi
-fun <T> async(
-    context: CoroutineContext = EmptyCoroutineContext,
-    start: CoroutineStart = CoroutineStart.DEFAULT,
-    block: suspend CoroutineScope.() -> T
-): Deferred<T> = GlobalScope.async(context, start, block)
+inline fun <T> dispatch(
+    context: CoroutineContext = Dispatchers.Default,
+    crossinline block: suspend CoroutineScope.() -> T
+): Future<T> =
+    Future {
+        withContext(context) {
+            block()
+        }
+    }
 
-@DelicateCoroutinesApi
-fun launch(
-    context: CoroutineContext = EmptyCoroutineContext,
-    start: CoroutineStart = CoroutineStart.DEFAULT,
-    block: suspend CoroutineScope.() -> Unit
-): Job = GlobalScope.launch(context, start, block)
+@Deprecated("", ReplaceWith("dispatch { block() }"))
+inline fun <T> async(crossinline block: suspend CoroutineScope.() -> T): Future<T> =
+    dispatch { block() }
 
-@DelicateCoroutinesApi
-fun <T> fork(
-    start: CoroutineStart = CoroutineStart.DEFAULT,
-    block: suspend CoroutineScope.() -> T
-): Deferred<T> = async(COMMON_POOL, start, block)
+@Deprecated("", ReplaceWith("dispatch { block() }"))
+inline fun launch(crossinline block: suspend CoroutineScope.() -> Unit): Future<Unit> =
+    dispatch { block() }
 
-fun <T> CoroutineScope.fork(
-    start: CoroutineStart = CoroutineStart.DEFAULT,
-    block: suspend CoroutineScope.() -> T
-): Deferred<T> = async(COMMON_POOL, start, block)
+@Deprecated("", ReplaceWith("dispatch(Dispatchers.IO) { block() }", "kotlinx.coroutines.Dispatchers"))
+inline fun <T> fork(crossinline block: suspend CoroutineScope.() -> T): Future<T> =
+    dispatch(Dispatchers.IO) { block() }
 
 @Throws(InterruptedException::class)
 fun <T> blocking(context: CoroutineContext = EmptyCoroutineContext, block: suspend CoroutineScope.() -> T): T =
@@ -102,11 +88,11 @@ class Group<K, V> : Await<Map<K, V>>() {
     }
 
     infix fun K.by(deferred: Deferred<V>) {
-        nodes+= Key(this, deferred)
+        nodes += Key(this, deferred)
     }
 
     infix fun K.by(future: Future<V>) {
-        nodes+= Key(this, future)
+        nodes += Key(this, future)
     }
 
     inline operator fun K.invoke(crossinline block: suspend () -> V) = this by Future(block)
