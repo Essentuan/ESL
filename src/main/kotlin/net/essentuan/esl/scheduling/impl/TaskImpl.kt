@@ -107,7 +107,7 @@ abstract class TaskImpl(
             complete()
 
             when (val ex = (result as? Result.Fail<*>)?.cause ?: return) {
-                is CancellationException -> Scheduler.error("${this@TaskImpl.id}#$id was cancelled")
+                is CancellationException -> Unit
                 is Task.Exception -> {
                     Scheduler.error(
                         "An exception was thrown while executing ${ex.process.id}!",
