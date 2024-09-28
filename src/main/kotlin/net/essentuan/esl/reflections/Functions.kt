@@ -1,6 +1,7 @@
 package net.essentuan.esl.reflections
 
 import net.essentuan.esl.collections.multimap.Multimaps
+import net.essentuan.esl.collections.multimap.concurrentValues
 import net.essentuan.esl.collections.multimap.hashSetValues
 import net.essentuan.esl.reflections.Reflections.acquire
 import net.essentuan.esl.reflections.extensions.contains
@@ -17,9 +18,9 @@ import kotlin.reflect.jvm.javaMethod
 import kotlin.reflect.jvm.jvmErasure
 
 class Functions internal constructor() : Sequence<KFunction<*>> {
-    internal val annotatedWith = Multimaps.hashKeys().hashSetValues<Class<*>, KFunction<*>>()
-    internal val withSignature = Multimaps.hashKeys().hashSetValues<List<Class<*>>, KFunction<*>>()
-    internal val returns = Multimaps.hashKeys().hashSetValues<Class<*>, KFunction<*>>()
+    internal val annotatedWith = Multimaps.concurrentKeys().concurrentValues<Class<*>, KFunction<*>>()
+    internal val withSignature = Multimaps.concurrentKeys().concurrentValues<List<Class<*>>, KFunction<*>>()
+    internal val returns = Multimaps.concurrentKeys().concurrentValues<Class<*>, KFunction<*>>()
 
     internal val all = mutableSetOf<KFunction<*>>()
 
@@ -41,7 +42,7 @@ class Functions internal constructor() : Sequence<KFunction<*>> {
     fun <T : Any> returns(cls: KClass<T>): Sequence<KFunction<T?>> =
         returns(cls.java)
 
-    override fun iterator(): Iterator<KFunction<*>> = acquire {all.iterator() }
+    override fun iterator(): Iterator<KFunction<*>> = acquire { all.iterator() }
 
     companion object {
         fun <T : KFunction<*>, U : Annotation> Sequence<T>.annotatedWith(cls: KClass<U>): Sequence<T> =

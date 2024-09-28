@@ -1,7 +1,7 @@
 package net.essentuan.esl.reflections
 
 import net.essentuan.esl.collections.multimap.Multimaps
-import net.essentuan.esl.collections.multimap.hashSetValues
+import net.essentuan.esl.collections.multimap.concurrentValues
 import net.essentuan.esl.reflections.Reflections.acquire
 import net.essentuan.esl.reflections.extensions.contains
 import net.essentuan.esl.reflections.extensions.extends
@@ -13,8 +13,8 @@ import kotlin.reflect.full.extensionReceiverParameter
 import kotlin.reflect.full.instanceParameter
 
 class Properties : Sequence<KProperty<*>> {
-    internal val annotatedWith = Multimaps.hashKeys().hashSetValues<Class<*>, KProperty<*>>()
-    internal val typeOf = Multimaps.hashKeys().hashSetValues<Class<*>, KProperty<*>>()
+    internal val annotatedWith = Multimaps.concurrentKeys().concurrentValues<Class<*>, KProperty<*>>()
+    internal val typeOf = Multimaps.concurrentKeys().concurrentValues<Class<*>, KProperty<*>>()
 
     internal val all = typeOf[Any::class.java]
 

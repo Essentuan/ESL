@@ -1,7 +1,7 @@
 package net.essentuan.esl.reflections
 
 import net.essentuan.esl.collections.multimap.Multimaps
-import net.essentuan.esl.collections.multimap.hashSetValues
+import net.essentuan.esl.collections.multimap.concurrentValues
 import net.essentuan.esl.reflections.Reflections.acquire
 import net.essentuan.esl.reflections.extensions.contains
 import net.essentuan.esl.reflections.extensions.extends
@@ -9,8 +9,8 @@ import net.essentuan.esl.reflections.extensions.isObject
 import kotlin.reflect.KClass
 
 class Types internal constructor() : Sequence<KClass<*>> {
-    internal val subtypes = Multimaps.hashKeys().hashSetValues<Class<*>, KClass<*>>()
-    internal val annotatedWith = Multimaps.hashKeys().hashSetValues<Class<*>, KClass<*>>()
+    internal val subtypes = Multimaps.concurrentKeys().concurrentValues<Class<*>, KClass<*>>()
+    internal val annotatedWith = Multimaps.concurrentKeys().concurrentValues<Class<*>, KClass<*>>()
 
     internal val all = subtypes.get(Any::class.java)
 
