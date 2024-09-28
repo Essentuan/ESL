@@ -1,5 +1,7 @@
 package net.essentuan.esl.future.api
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.withContext
 import net.essentuan.esl.future.AbstractCompletable
 import java.util.function.Supplier
 import kotlin.coroutines.Continuation
@@ -32,7 +34,10 @@ interface Completable<T> : Future<T> {
             return object : AbstractCompletable<T>() {}
         }
 
-        inline operator fun <T> invoke(crossinline block: suspend () -> T): Completable<T> {
+        inline operator fun <T> invoke(
+            context: CoroutineContext = EmptyCoroutineContext,
+            crossinline block: suspend CoroutineScope.() -> T
+        ): Completable<T> {
             return object : AbstractCompletable<T>(), Continuation<T> {
                 override val context: CoroutineContext
                     get() = EmptyCoroutineContext
@@ -41,7 +46,10 @@ interface Completable<T> : Future<T> {
                     ::start.startCoroutine(this)
                 }
 
-                suspend fun start() = block()
+                suspend fun start() =
+                    withContext(context) {
+                        block()
+                    }
 
                 override fun resumeWith(result: Result<T>) {
                     when {

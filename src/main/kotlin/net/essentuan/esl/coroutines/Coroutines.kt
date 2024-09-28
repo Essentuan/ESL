@@ -5,43 +5,20 @@ import net.essentuan.esl.Result
 import net.essentuan.esl.future.api.Future
 import net.essentuan.esl.ifPresent
 import net.essentuan.esl.time.duration.Duration
-import java.util.concurrent.ForkJoinPool
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.reflect.KProperty
 
-val COMMON_POOL = ForkJoinPool.commonPool().asCoroutineDispatcher()
-
-inline fun <T> dispatch(
-    context: CoroutineContext = Dispatchers.Default,
-    crossinline block: suspend CoroutineScope.() -> T
-): Future<T> =
-    Future {
-        withContext(context) {
-            block()
-        }
-    }
-
-@Deprecated("", ReplaceWith("dispatch { block() }"))
-inline fun <T> async(crossinline block: suspend CoroutineScope.() -> T): Future<T> =
-    dispatch { block() }
-
-@Deprecated("", ReplaceWith("dispatch { block() }"))
-inline fun launch(crossinline block: suspend CoroutineScope.() -> Unit): Future<Unit> =
-    dispatch { block() }
-
-@Deprecated("", ReplaceWith("dispatch(Dispatchers.IO) { block() }", "kotlinx.coroutines.Dispatchers"))
-inline fun <T> fork(crossinline block: suspend CoroutineScope.() -> T): Future<T> =
-    dispatch(Dispatchers.IO) { block() }
-
-@Throws(InterruptedException::class)
-fun <T> blocking(context: CoroutineContext = EmptyCoroutineContext, block: suspend CoroutineScope.() -> T): T =
+fun <T> blocking(
+    context: CoroutineContext = EmptyCoroutineContext,
+    block: suspend CoroutineScope.() -> T
+): T =
     runBlocking(context, block)
 
 suspend fun <T> timeout(timeout: Duration, block: suspend CoroutineScope.() -> T): T =
     withTimeout(timeout.toKotlin(), block)
 
-suspend fun delay(delay: Duration) = kotlinx.coroutines.delay(delay.toKotlin())
+suspend fun delay(delay: Duration) = delay(delay.toKotlin())
 
 suspend inline fun await(init: Collector.() -> Unit) {
     val collector = Collector()
@@ -95,7 +72,7 @@ class Group<K, V> : Await<Map<K, V>>() {
         nodes += Key(this, future)
     }
 
-    inline operator fun K.invoke(crossinline block: suspend () -> V) = this by Future(block)
+    inline operator fun K.invoke(crossinline block: suspend () -> V) = this by Future { block() }
 
     @OptIn(ExperimentalCoroutinesApi::class)
     @Suppress("UNCHECKED_CAST")

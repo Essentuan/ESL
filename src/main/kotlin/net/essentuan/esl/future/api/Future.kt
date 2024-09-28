@@ -1,5 +1,7 @@
 package net.essentuan.esl.future.api
 
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import net.essentuan.esl.Result
 import net.essentuan.esl.future.AbstractCompletable
 import net.essentuan.esl.future.AbstractFuture
@@ -14,6 +16,8 @@ import java.util.concurrent.TimeoutException
 import java.util.function.Consumer
 import java.util.function.Function
 import java.util.function.Supplier
+import kotlin.coroutines.CoroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.reflect.KClass
 
 interface Future<T> : Publisher<T> {
@@ -89,7 +93,10 @@ interface Future<T> : Publisher<T> {
 
         operator fun <T> invoke(stage: CompletionStage<T>): Future<T> = AbstractFuture.Native(stage)
 
-        inline operator fun <T> invoke(crossinline block: suspend () -> T): Future<T> = Completable(block)
+        inline operator fun <T> invoke(
+            context: CoroutineContext = Dispatchers.Default,
+            crossinline block: suspend CoroutineScope.() -> T
+        ): Future<T> = Completable(context, block)
 
         fun sleep(duration: Duration): Future<Unit> {
             return Completable<Unit>()
