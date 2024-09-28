@@ -1,7 +1,9 @@
 package net.essentuan.esl.collections.multimap
 
 import com.google.common.collect.ListMultimap
+import com.google.common.collect.MapMaker
 import com.google.common.collect.Multimap
+import com.google.common.collect.MultimapBuilder
 import com.google.common.collect.Ordering
 import com.google.common.collect.SetMultimap
 import com.google.common.collect.SortedSetMultimap
@@ -14,6 +16,7 @@ import java.util.SortedSet
 import java.util.TreeMap
 import java.util.TreeSet
 import java.util.WeakHashMap
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.experimental.ExperimentalTypeInference
 
 private typealias Factory = com.google.common.collect.Multimaps
@@ -39,16 +42,17 @@ object Multimaps {
         return MultiMapBuilder { LinkedHashMap<Any?, Collection<Any?>>() }
     }
 
+    fun concurrentKeys(): MultiMapBuilder {
+        return MultiMapBuilder { ConcurrentHashMap<Any?, Collection<Any?>>() }
+    }
+
     fun weakKeys(): MultiMapBuilder =
-        MultiMapBuilder { WeakHashMap<Any?, Collection<Any?>>() }
+        MultiMapBuilder { MapMaker().weakKeys().makeMap<Any?, Collection<Any?>>() }
 
-    fun weakKeys(expectedKeys: Int): MultiMapBuilder =
-        MultiMapBuilder { WeakHashMap<Any?, Collection<Any?>>(expectedKeys) }
-
-    fun <T: Enum<T>> enumKeys(cls: Class<T>): MultiMapBuilder =
+    fun <T : Enum<T>> enumKeys(cls: Class<T>): MultiMapBuilder =
         MultiMapBuilder { EnumMap(cls) }
 
-    inline fun <reified T: Enum<T>> enumKeys(): MultiMapBuilder =
+    inline fun <reified T : Enum<T>> enumKeys(): MultiMapBuilder =
         enumKeys(T::class.java)
 
     fun <T> treeKeys(comparator: Comparator<T>): MultiMapBuilder =
@@ -110,17 +114,20 @@ fun <K, V> MultiMapBuilder.linkedHashSetValues(): SetMultimap<K, V> =
 fun <K, V> MultiMapBuilder.linkedHashSetValues(numElements: Int): SetMultimap<K, V> =
     Factory.newSetMultimap<K, V>(this()) { LinkedHashSet(numElements) }
 
-fun <K, V: Enum<V>> MultiMapBuilder.enumSetValues(cls: Class<V>): SetMultimap<K, V> =
+fun <K, V> MultiMapBuilder.concurrentValues(): SetMultimap<K, V> =
+    Factory.newSetMultimap<K, V>(this()) { mutableSetFrom(::ConcurrentHashMap) }
+
+fun <K, V> MultiMapBuilder.weakValues(): SetMultimap<K, V> =
+    Factory.newSetMultimap<K, V>(this()) { mutableSetFrom { MapMaker().weakKeys().makeMap() } }
+
+fun <K, V : Enum<V>> MultiMapBuilder.enumSetValues(cls: Class<V>): SetMultimap<K, V> =
     Factory.newSetMultimap<K, V>(this()) { EnumSet.noneOf(cls) }
 
-inline fun <K, reified V: Enum<V>> MultiMapBuilder.enumSetValues(): SetMultimap<K, V> =
+inline fun <K, reified V : Enum<V>> MultiMapBuilder.enumSetValues(): SetMultimap<K, V> =
     enumSetValues(V::class.java)
 
 fun <K, V> MultiMapBuilder.treeSetValues(comparator: Comparator<V>): SetMultimap<K, V> =
     Factory.newSetMultimap<K, V>(this()) { TreeSet(comparator) }
 
-fun <K, V: Comparable<V>> MultiMapBuilder.treeSetValues(): SetMultimap<K, V> =
+fun <K, V : Comparable<V>> MultiMapBuilder.treeSetValues(): SetMultimap<K, V> =
     Factory.newSetMultimap<K, V>(this()) { TreeSet(naturalOrder<V>()) }
-
-fun <K, V> MultiMapBuilder.weakValues(): SetMultimap<K, V> =
-    Factory.newSetMultimap<K, V>(this()) { mutableSetFrom(::WeakHashMap) }
